@@ -1,0 +1,18 @@
+{
+  "core": "WordPress/WordPress#6.5.0",
+  "phpVersion": "8.1",
+  "plugins": [
+    ".",
+    "https://downloads.wordpress.org/plugin/woocommerce.9.0.2.zip"
+  ],
+  "themes": [
+    "https://downloads.wordpress.org/theme/twentytwentyfour.latest-stable.zip",
+    "https://downloads.wordpress.org/theme/twentytwentythree.latest-stable.zip"
+  ],
+  "config": {
+    "WP_DEBUG": true,
+    "WP_DEBUG_DISPLAY": false,
+    "WP_DEBUG_LOG": true,
+    "SCRIPT_DEBUG": true
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "woocommerce-conflict-doctor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Automated plugin/theme conflict testing for WooCommerce merchants.",
+  "scripts": {
+    "start": "wp-env start",
+    "stop": "wp-env stop",
+    "setup": "wp-env run cli wp user create testadmin testadmin@example.com --role=administrator --user_pass=password && wp-env run cli wp wc payment_gateway update cheque --enabled=true --user=1 || true",
+    "clean": "wp-env run cli rm -f /var/www/html/wp-content/mu-plugins/wcd-loader.php",
+    "test:e2e": "playwright test tests/e2e",
+    "test:e2e:ui": "playwright test tests/e2e --ui"
+  },
+  "devDependencies": {
+    "@wordpress/env": "^10.0.0",
+    "@playwright/test": "^1.44.0"
+  }
+}
