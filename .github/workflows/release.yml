@@ -1,0 +1,72 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-zip:
+    name: Build plugin .zip and attach to release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert readme.txt Stable tag matches
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          grep -qE "^Stable tag: $v$" readme.txt \
+            || { echo "readme.txt Stable tag does not match $v"; exit 1; }
+
+      - name: Build plugin zip
+        run: |
+          set -euo pipefail
+          slug="woocommerce-conflict-doctor"
+          staging="/tmp/$slug"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+          # Copy runtime files only — dev/test/CI assets are excluded.
+          rsync -a ./ "$staging/" \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.wp-env*' \
+            --exclude='.phpunit.result.cache' \
+            --exclude='.gitignore' \
+            --exclude='node_modules' \
+            --exclude='vendor' \
+            --exclude='tests' \
+            --exclude='docs' \
+            --exclude='test-results' \
+            --exclude='playwright-report' \
+            --exclude='playwright.config.js' \
+            --exclude='package.json' \
+            --exclude='package-lock.json' \
+            --exclude='composer.json' \
+            --exclude='composer.lock' \
+            --exclude='phpunit.xml' \
+            --exclude='patchwork.json' \
+            --exclude='HACKING.md'
+          cd /tmp && zip -r "$slug-${{ steps.ver.outputs.version }}.zip" "$slug"
+          ls -lh "$slug-${{ steps.ver.outputs.version }}.zip"
+
+      - name: Attach zip to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/woocommerce-conflict-doctor-${{ steps.ver.outputs.version }}.zip
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.version, '-') }}
+          body: |
+            WooCommerce Conflict Doctor ${{ steps.ver.outputs.version }}
+
+            **Distribution reminder:** Private beta only. Do not share
+            outside Automattic HE-recommended tickets until the HE sign-off
+            in [docs/he-approval.md](docs/he-approval.md) is completed.
+
+            Install: download the `.zip` below, then upload via
+            **wp-admin → Plugins → Add New → Upload Plugin**.
