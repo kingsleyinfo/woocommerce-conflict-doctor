@@ -1,0 +1,288 @@
+/**
+ * WooCommerce Conflict Doctor — wizard styles.
+ * Matches WordPress admin conventions (.button, .notice). No framework, no reset.
+ */
+
+#wcd-wizard-root {
+	max-width: 720px;
+}
+
+#wcd-wizard-root h1 {
+	margin-bottom: 1.5em;
+}
+
+#wcd-wizard-app[data-loading="true"]::before {
+	content: "";
+	display: block;
+	padding: 3em 0;
+	text-align: center;
+	color: #757575;
+}
+
+.wcd-card {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 1.5em 2em;
+	margin-bottom: 1em;
+	box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.wcd-card h2 {
+	margin-top: 0;
+	margin-bottom: 0.75em;
+	font-size: 1.4em;
+	color: #1d2327;
+}
+
+.wcd-card h4 {
+	margin: 1.25em 0 0.5em;
+	font-size: 1em;
+	color: #1d2327;
+}
+
+.wcd-actions {
+	margin-top: 1.5em;
+	padding-top: 1em;
+	border-top: 1px solid #dcdcde;
+	display: flex;
+	justify-content: flex-end;
+	gap: 0.5em;
+}
+
+.wcd-help {
+	color: #646970;
+	margin: 0.5em 0 1em;
+}
+
+/* Form controls */
+.wcd-select {
+	width: 100%;
+	max-width: 100%;
+	padding: 0.5em;
+	font-size: 1em;
+}
+
+.wcd-plugin-list,
+.wcd-theme-row,
+.wcd-plugin-row {
+	display: block;
+}
+
+.wcd-plugin-list {
+	border: 1px solid #dcdcde;
+	border-radius: 3px;
+	max-height: 320px;
+	overflow-y: auto;
+	margin-bottom: 0.5em;
+}
+
+.wcd-plugin-row {
+	display: flex;
+	align-items: center;
+	gap: 0.75em;
+	padding: 0.75em 1em;
+	border-bottom: 1px solid #f0f0f1;
+	cursor: pointer;
+}
+
+.wcd-plugin-row:last-child {
+	border-bottom: none;
+}
+
+.wcd-plugin-row:hover {
+	background: #f6f7f7;
+}
+
+.wcd-plugin-row input[type="checkbox"] {
+	margin: 0;
+}
+
+.wcd-plugin-name {
+	font-weight: 500;
+	flex: 1;
+}
+
+.wcd-plugin-meta {
+	color: #646970;
+	font-size: 0.9em;
+}
+
+.wcd-mode-radio {
+	margin-top: 1em;
+}
+
+.wcd-mode-radio label,
+.wcd-theme-row,
+.wcd-cache-choice label {
+	display: block;
+	padding: 0.5em 0;
+	cursor: pointer;
+}
+
+.wcd-theme-row input,
+.wcd-mode-radio input,
+.wcd-cache-choice input {
+	margin-right: 0.5em;
+}
+
+/* Notices */
+.wcd-notice {
+	padding: 0.75em 1em;
+	margin: 1em 0;
+	border-left: 4px solid #72aee6;
+	background: #f0f6fc;
+	border-radius: 2px;
+}
+
+.wcd-notice-warning {
+	border-left-color: #dba617;
+	background: #fcf9e8;
+}
+
+.wcd-notice-error {
+	border-left-color: #d63638;
+	background: #fcf0f1;
+}
+
+/* Plugin summary lists */
+.wcd-plugin-summary {
+	margin: 0.5em 0;
+	padding-left: 1.5em;
+}
+
+.wcd-plugin-summary li {
+	margin-bottom: 0.25em;
+}
+
+.wcd-collapsible summary {
+	cursor: pointer;
+	color: #2271b1;
+	padding: 0.5em 0;
+	user-select: none;
+}
+
+.wcd-collapsible summary:hover {
+	color: #135e96;
+}
+
+/* Spinner */
+.wcd-spinner {
+	text-align: center;
+	padding: 3em 0;
+	color: #646970;
+}
+
+.wcd-spinner .spinner {
+	float: none;
+	margin: 0 0.5em 0 0;
+	vertical-align: middle;
+}
+
+/* Waiting state — this is the anchor screen merchants come back to */
+.wcd-waiting {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 2em;
+	text-align: center;
+}
+
+.wcd-waiting h2 {
+	margin-top: 0;
+}
+
+.wcd-timer {
+	color: #646970;
+	font-size: 0.9em;
+	margin-bottom: 1.5em;
+}
+
+.wcd-round-buttons {
+	margin: 2em 0 1em;
+	display: flex;
+	justify-content: center;
+	gap: 0.75em;
+	flex-wrap: wrap;
+}
+
+.wcd-abort-link {
+	margin-top: 2em;
+	padding-top: 1em;
+	border-top: 1px solid #dcdcde;
+}
+
+.wcd-abort-link a {
+	color: #646970;
+	font-size: 0.9em;
+}
+
+.wcd-abort-link a:hover {
+	color: #d63638;
+}
+
+/* Results */
+.wcd-result {
+	text-align: center;
+	padding: 1em 0;
+}
+
+.wcd-result-culprit {
+	text-align: left;
+}
+
+.wcd-culprit-card {
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 1.25em 1.5em;
+	margin: 1em 0;
+}
+
+.wcd-culprit-name {
+	font-size: 1.3em;
+	font-weight: 600;
+	color: #1d2327;
+}
+
+.wcd-culprit-version,
+.wcd-culprit-author {
+	color: #646970;
+	font-size: 0.95em;
+}
+
+.wcd-diagnosis {
+	width: 100%;
+	height: 80px;
+	font-family: monospace;
+	font-size: 0.9em;
+	padding: 0.5em;
+	margin-top: 1em;
+	background: #f6f7f7;
+	border: 1px solid #dcdcde;
+	border-radius: 3px;
+	resize: vertical;
+}
+
+.wcd-result-error h2 {
+	color: #d63638;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+	.wcd-card {
+		padding: 1em;
+	}
+	.wcd-actions {
+		flex-direction: column;
+	}
+	.wcd-actions .button {
+		width: 100%;
+	}
+	.wcd-round-buttons {
+		flex-direction: column;
+	}
+	.wcd-round-buttons .button {
+		width: 100%;
+	}
+}

@@ -45,11 +45,28 @@ class WCD_Wizard {
 			array(),
 			WCD_VERSION
 		);
+
 		wp_localize_script( 'wcd-wizard', 'wcdData', array(
-			'ajaxUrl'  => admin_url( 'admin-ajax.php' ),
-			'nonce'    => wp_create_nonce( WCD_NONCE ),
-			'symptoms' => WCD_SYMPTOMS,
-			'ttl'      => WCD_SESSION_TTL,
+			'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
+			'nonce'        => wp_create_nonce( WCD_NONCE ),
+			'actions'      => array(
+				'start' => WCD_AJAX_START,
+				'round' => WCD_AJAX_ROUND,
+				'abort' => WCD_AJAX_ABORT,
+				'purge' => WCD_AJAX_PURGE,
+			),
+			'symptoms'     => WCD_SYMPTOMS,
+			'symptomUrls'  => self::build_symptom_urls(),
+			'ttl'          => WCD_SESSION_TTL,
+			'plugins'      => self::get_suspect_ranked_plugins(),
+			'themes'       => self::get_safe_themes(),
+			'currentTheme' => get_stylesheet(),
+			'cachePlugin'  => self::detect_cache_plugin(),
+			'session'      => self::get_active_session_for_js(),
+			'canInstallMu' => WCD_Troubleshoot_Mode::can_install_mu_plugin(),
+			'debugMode'    => defined( 'WP_DEBUG_DISPLAY' ) && WP_DEBUG_DISPLAY,
+			'homeUrl'      => home_url( '/' ),
+			'strings'      => self::translatable_strings(),
 		) );
 	}
 
@@ -420,6 +437,161 @@ class WCD_Wizard {
 			);
 		}
 		return array( 'file' => $plugin_file, 'name' => $plugin_file, 'version' => '', 'author' => '' );
+	}
+
+	private static function get_suspect_ranked_plugins() {
+		if ( ! function_exists( 'get_plugins' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+		$plugins   = get_plugins();
+		$active    = (array) get_option( 'active_plugins', array() );
+		$allowlist = self::get_allowlist();
+		$ranked    = array();
+
+		foreach ( $plugins as $file => $data ) {
+			$full_path = WP_PLUGIN_DIR . '/' . $file;
+			$mtime     = file_exists( $full_path ) ? filemtime( $full_path ) : 0;
+			$ranked[]  = array(
+				'file'         => $file,
+				'name'         => $data['Name'],
+				'version'      => $data['Version'],
+				'mtime'        => $mtime,
+				'active'       => in_array( $file, $active, true ),
+				'allowlisted'  => in_array( $file, $allowlist, true ),
+				'installed_ago' => human_time_diff( $mtime ),
+			);
+		}
+
+		// Newest first — most recently installed/updated is the likeliest culprit.
+		usort( $ranked, static function( $a, $b ) {
+			return $b['mtime'] <=> $a['mtime'];
+		} );
+
+		return $ranked;
+	}
+
+	private static function get_safe_themes() {
+		$themes  = wp_get_themes();
+		$safe    = array();
+		$preferred = array( 'twentytwentyfour', 'twentytwentythree', 'twentytwentytwo' );
+
+		foreach ( $preferred as $slug ) {
+			if ( isset( $themes[ $slug ] ) ) {
+				$safe[] = array(
+					'slug'      => $slug,
+					'name'      => $themes[ $slug ]->get( 'Name' ),
+					'preferred' => true,
+				);
+			}
+		}
+
+		// Include other installed themes as fallback options.
+		foreach ( $themes as $slug => $theme ) {
+			if ( in_array( $slug, $preferred, true ) ) {
+				continue;
+			}
+			$safe[] = array(
+				'slug'      => $slug,
+				'name'      => $theme->get( 'Name' ),
+				'preferred' => false,
+			);
+		}
+
+		return $safe;
+	}
+
+	private static function detect_cache_plugin() {
+		$active = (array) get_option( 'active_plugins', array() );
+		foreach ( WCD_CACHE_PLUGINS as $file => $name ) {
+			if ( in_array( $file, $active, true ) ) {
+				return array(
+					'file' => $file,
+					'name' => $name,
+				);
+			}
+		}
+		return null;
+	}
+
+	private static function get_active_session_for_js() {
+		$token = WCD_Troubleshoot_Mode::get_token_from_cookie();
+		if ( ! $token ) {
+			return null;
+		}
+		$session = WCD_Troubleshoot_Mode::get_session( $token );
+		if ( ! $session ) {
+			return null;
+		}
+		return self::sanitize_session_for_js( $session );
+	}
+
+	private static function build_symptom_urls() {
+		$home = home_url( '/' );
+		$urls = array(
+			'checkout' => function_exists( 'wc_get_checkout_url' ) ? wc_get_checkout_url() : $home,
+			'cart'     => function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : $home,
+			'admin'    => admin_url(),
+			'frontend' => $home,
+			'products' => function_exists( 'wc_get_page_permalink' ) ? wc_get_page_permalink( 'shop' ) : $home,
+			'emails'   => $home,
+			'other'    => $home,
+		);
+		return $urls;
+	}
+
+	private static function translatable_strings() {
+		return array(
+			'loading'                => __( 'Loading…', 'woocommerce-conflict-doctor' ),
+			'updating'               => __( 'Updating your test…', 'woocommerce-conflict-doctor' ),
+			'worksNow'               => __( 'Works now', 'woocommerce-conflict-doctor' ),
+			'stillBroken'            => __( 'Still broken', 'woocommerce-conflict-doctor' ),
+			'notSure'                => __( "Not sure \xe2\x80\x94 I can't tell", 'woocommerce-conflict-doctor' ),
+			'notSureDisclosure'      => __( "We'll treat this as \"still broken\" and keep narrowing down. That's the safest choice.", 'woocommerce-conflict-doctor' ),
+			'tryItNow'               => __( 'Try it now', 'woocommerce-conflict-doctor' ),
+			'tryItHint'              => __( 'Open this on the same device and browser where you first saw the problem.', 'woocommerce-conflict-doctor' ),
+			'waitingHeader'          => __( 'Your test is paused', 'woocommerce-conflict-doctor' ),
+			'waitingBody'            => __( 'Come back here after you have tested your site.', 'woocommerce-conflict-doctor' ),
+			'abort'                  => __( 'Abort and restore everything', 'woocommerce-conflict-doctor' ),
+			'back'                   => __( 'Back', 'woocommerce-conflict-doctor' ),
+			'continue'               => __( 'Continue', 'woocommerce-conflict-doctor' ),
+			'cancel'                 => __( 'Cancel', 'woocommerce-conflict-doctor' ),
+			'go'                     => __( 'Go', 'woocommerce-conflict-doctor' ),
+			'done'                   => __( 'Done', 'woocommerce-conflict-doctor' ),
+			'restart'                => __( 'Restart', 'woocommerce-conflict-doctor' ),
+			'copyDiagnosis'          => __( 'Copy diagnosis to clipboard', 'woocommerce-conflict-doctor' ),
+			'copied'                 => __( 'Copied!', 'woocommerce-conflict-doctor' ),
+			'restoredHeader'         => __( 'Your site is back to normal.', 'woocommerce-conflict-doctor' ),
+			'restoredBody'           => __( 'All plugins re-enabled. Theme restored. Nothing was permanently changed.', 'woocommerce-conflict-doctor' ),
+			'notAConflictHeader'     => __( 'We ruled out plugins and themes', 'woocommerce-conflict-doctor' ),
+			'notAConflictBody'       => __( "That means the issue is likely in your settings or data, and your support agent can diagnose it much faster now.\nNote: some plugins leave behind stored data even when disabled \xe2\x80\x94 if the issue is data-related, this test won't catch it.", 'woocommerce-conflict-doctor' ),
+			'culpritHeader'          => __( 'We found the plugin causing your issue', 'woocommerce-conflict-doctor' ),
+			'managedHostHeader'      => __( 'Your host blocks safe testing', 'woocommerce-conflict-doctor' ),
+			'managedHostBody'        => __( "Your hosting provider blocks the safe per-user testing mode. This means we can't run the conflict test without affecting your live site.\n\nWhat to do: Contact your host and ask them to allow writes to wp-content/mu-plugins/, or test on a staging environment.", 'woocommerce-conflict-doctor' ),
+			'resumeHeader'           => __( 'You have an active test in progress', 'woocommerce-conflict-doctor' ),
+			'resumePrompt'           => __( 'A test started on another tab or device is still running.', 'woocommerce-conflict-doctor' ),
+			'resume'                 => __( 'Resume test', 'woocommerce-conflict-doctor' ),
+			'debugWarning'           => __( 'Your site is in debug mode. You may see technical messages during testing \xe2\x80\x94 these are not new errors caused by this tool.', 'woocommerce-conflict-doctor' ),
+			'cacheWarning'           => __( "Cached pages are served before WordPress boots, which means your customers won't see changes during the test unless we clear the cache first.", 'woocommerce-conflict-doctor' ),
+			'cachePurgeBefore'       => __( 'Yes, purge cache before each round', 'woocommerce-conflict-doctor' ),
+			'cacheSkip'              => __( 'Skip \xe2\x80\x94 I understand results may be inconsistent', 'woocommerce-conflict-doctor' ),
+			'confirmHeader'          => __( "Ready? Here's what will happen:", 'woocommerce-conflict-doctor' ),
+			'confirmReassure'        => __( "Your customers won't see any changes during this test \xe2\x80\x94 only you will.", 'woocommerce-conflict-doctor' ),
+			'confirmStayActive'      => __( 'These will stay on throughout:', 'woocommerce-conflict-doctor' ),
+			'confirmTempOff'         => __( 'These will be temporarily hidden from you only:', 'woocommerce-conflict-doctor' ),
+			'confirmTheme'           => __( "We'll switch your theme to:", 'woocommerce-conflict-doctor' ),
+			'showList'               => __( 'Show list', 'woocommerce-conflict-doctor' ),
+			'hideList'               => __( 'Hide list', 'woocommerce-conflict-doctor' ),
+			'symptomHeader'          => __( 'What is broken?', 'woocommerce-conflict-doctor' ),
+			'modeHeader'             => __( 'Do you have a specific plugin in mind?', 'woocommerce-conflict-doctor' ),
+			'modeLikely'             => __( "We think these are the most likely culprits \xe2\x80\x94 recently installed or updated:", 'woocommerce-conflict-doctor' ),
+			'modeTestAll'            => __( "I don't know \xe2\x80\x94 test everything", 'woocommerce-conflict-doctor' ),
+			'modeShowAll'            => __( 'Show all plugins', 'woocommerce-conflict-doctor' ),
+			'themeHeader'            => __( 'Choose a safe theme to test with', 'woocommerce-conflict-doctor' ),
+			'themeRecommended'       => __( 'recommended', 'woocommerce-conflict-doctor' ),
+			'themeKeepCurrent'       => __( 'Keep current theme (not recommended \xe2\x80\x94 may mask theme conflicts)', 'woocommerce-conflict-doctor' ),
+			'genericError'           => __( 'Something went wrong. Please try again.', 'woocommerce-conflict-doctor' ),
+			'expired'                => __( 'Your test session has expired. Please restart.', 'woocommerce-conflict-doctor' ),
+		);
 	}
 
 	private static function purge_known_cache( $plugin_file ) {
