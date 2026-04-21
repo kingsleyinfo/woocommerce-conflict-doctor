@@ -434,8 +434,14 @@ class WCD_Wizard {
 	}
 
 	private static function assert_allowlist_intact() {
-		$active = (array) get_option( 'active_plugins', array() );
+		$active    = (array) get_option( 'active_plugins', array() );
+		$installed = self::get_testable_plugins();
 		foreach ( self::get_allowlist() as $plugin ) {
+			// Allowlist is "if installed, don't touch" — not "must be installed".
+			// A fresh WP without Jetpack should still pass the check.
+			if ( ! in_array( $plugin, $installed, true ) ) {
+				continue;
+			}
 			if ( ! in_array( $plugin, $active, true ) ) {
 				// An allowlisted plugin was deactivated out-of-band. Abort the test.
 				$token = WCD_Troubleshoot_Mode::get_token_from_cookie();
