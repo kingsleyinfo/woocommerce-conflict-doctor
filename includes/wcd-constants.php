@@ -8,6 +8,7 @@ define( 'WCD_AJAX_START',      'wcd_start_test' );
 define( 'WCD_AJAX_ROUND',      'wcd_round_result' );
 define( 'WCD_AJAX_ABORT',      'wcd_abort_test' );
 define( 'WCD_AJAX_PURGE',      'wcd_purge_cache' );
+define( 'WCD_AJAX_TTL_CHECK',  'wcd_ttl_check' );
 
 // Cookie name is site-specific to avoid cross-site collisions on shared hosting / multisite.
 define( 'WCD_COOKIE_NAME',     'wcd_troubleshoot_' . substr( md5( ABSPATH ), 0, 8 ) );

@@ -27,6 +27,7 @@
 		culprit: null,
 		error: null,
 		lastAnswer: null,      // last round answer, to show not-sure disclosure
+		allowlistKept: [],     // plugins kept active during test (for HE diagnostic)
 	};
 
 	// --------------------------------------------------------------------
@@ -329,12 +330,32 @@
 		},
 
 		notAConflict() {
+			const kept = state.allowlistKept || [];
+			let boundary = '';
+			if (kept.length) {
+				const list = kept.map((p) => '<li>' + escapeHtml(p.name || p.file) + '</li>').join('');
+				boundary = '<h4>' + escapeHtml(S.allowlistBoundaryHeader) + '</h4>' +
+					'<p class="wcd-help">' + escapeHtml(S.allowlistBoundaryBody) + '</p>' +
+					'<ul class="wcd-plugin-summary">' + list + '</ul>';
+			}
+
 			const body = '<div class="wcd-result wcd-result-not-conflict">' +
 				'<h2>' + escapeHtml(S.notAConflictHeader) + '</h2>' +
 				'<p>' + escapeHtml(S.notAConflictBody).replace(/\n/g, '<br>') + '</p>' +
+				boundary +
 				notice(S.restoredBody, 'info') +
 				'</div>';
 			const footer = button(S.done, { className: 'button button-primary', action: 'done' });
+			return card(body, footer);
+		},
+
+		intermittent() {
+			const body = '<div class="wcd-result">' +
+				'<h2>' + escapeHtml(S.intermittentHeader) + '</h2>' +
+				notice(S.intermittentBody, 'warning') +
+				'</div>';
+			const footer = button(S.abort, { action: 'abort' }) +
+				button(S.continue, { className: 'button button-primary', action: 'intermittent:continue' });
 			return card(body, footer);
 		},
 
@@ -407,20 +428,26 @@
 	}
 
 	async function onAction(e) {
-		e.preventDefault();
 		const action = e.currentTarget.dataset.action;
+		// waiting:tryit handles its own preventDefault conditionally so the
+		// anchor can still open target="_blank" when nothing needs to block.
+		if (action !== 'waiting:tryit') {
+			e.preventDefault();
+		}
 		try {
-			await handle(action);
+			await handle(action, e);
 		} catch (err) {
-			if (err.code === 'wcd_session_expired') {
+			if (err.code === 'wcd_session_expired' || err.code === 'wcd_ttl_expired') {
 				setStep('error', { error: S.expired });
+			} else if (err.code === 'wcd_allowlist_deactivated') {
+				setStep('error', { error: err.message });
 			} else {
 				setStep('error', { error: err.message || S.genericError });
 			}
 		}
 	}
 
-	async function handle(action) {
+	async function handle(action, event) {
 		switch (action) {
 			case 'symptom:next':
 				setStep('mode');
@@ -472,12 +499,33 @@
 				await startTest();
 				break;
 
-			case 'waiting:tryit':
-				if (data.cachePlugin && state.cachePurge) {
-					try { await ajax(data.actions.purge); } catch (err) { /* non-blocking */ }
+			case 'waiting:tryit': {
+				// Block the native anchor navigation so we can run TTL + purge
+				// checks first, then reopen the tab if checks pass.
+				if (event) event.preventDefault();
+				const tryUrl = event && event.currentTarget && event.currentTarget.href;
+
+				// TTL pre-check: don't let the merchant navigate with a dead session.
+				try {
+					await ajax(data.actions.ttlCheck);
+				} catch (err) {
+					setStep('error', { error: S.expired });
+					return;
 				}
-				// Link opens in new tab naturally.
+
+				// Cache purge: if the merchant asked for it, purge is blocking.
+				if (data.cachePlugin && state.cachePurge) {
+					try {
+						await ajax(data.actions.purge);
+					} catch (err) {
+						alert(err.message || S.genericError);
+						return;
+					}
+				}
+
+				if (tryUrl) window.open(tryUrl, '_blank', 'noopener');
 				break;
+			}
 
 			case 'round:fixed':
 				await sendRound('fixed');
@@ -502,6 +550,12 @@
 
 			case 'resume:continue':
 				setStep('waiting', { session: data.session });
+				break;
+
+			case 'intermittent:continue':
+				// Re-send the last answer with force=1 so the backend bypasses
+				// the contradiction detector and proceeds with narrowing.
+				await sendRound(state.lastAnswer || 'broken', { force: 1 });
 				break;
 
 			case 'culprit:copy': {
@@ -559,17 +613,22 @@
 		setStep('waiting', { session: result.session });
 	}
 
-	async function sendRound(answer) {
+	async function sendRound(answer, extra) {
 		state.lastAnswer = answer;
 		setStep('updating');
-		const result = await ajax(data.actions.round, { answer: answer });
+		const payload = Object.assign({ answer: answer }, extra || {});
+		const result = await ajax(data.actions.round, payload);
 
 		if (result.status === 'culprit_found') {
 			setStep('culprit', { culprit: result.culprit });
 			return;
 		}
 		if (result.status === 'not_a_conflict') {
-			setStep('notAConflict');
+			setStep('notAConflict', { allowlistKept: result.allowlist_kept || [] });
+			return;
+		}
+		if (result.status === 'intermittent') {
+			setStep('intermittent', { session: result.session });
 			return;
 		}
 		setStep('waiting', { session: result.session });

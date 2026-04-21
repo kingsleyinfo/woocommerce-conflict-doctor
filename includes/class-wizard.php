@@ -15,6 +15,7 @@ class WCD_Wizard {
 		add_action( 'wp_ajax_' . WCD_AJAX_ROUND, array( __CLASS__, 'ajax_round_result' ) );
 		add_action( 'wp_ajax_' . WCD_AJAX_ABORT, array( __CLASS__, 'ajax_abort_test' ) );
 		add_action( 'wp_ajax_' . WCD_AJAX_PURGE, array( __CLASS__, 'ajax_purge_cache' ) );
+		add_action( 'wp_ajax_' . WCD_AJAX_TTL_CHECK, array( __CLASS__, 'ajax_ttl_check' ) );
 	}
 
 	public static function register_admin_page() {
@@ -50,10 +51,11 @@ class WCD_Wizard {
 			'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
 			'nonce'        => wp_create_nonce( WCD_NONCE ),
 			'actions'      => array(
-				'start' => WCD_AJAX_START,
-				'round' => WCD_AJAX_ROUND,
-				'abort' => WCD_AJAX_ABORT,
-				'purge' => WCD_AJAX_PURGE,
+				'start'    => WCD_AJAX_START,
+				'round'    => WCD_AJAX_ROUND,
+				'abort'    => WCD_AJAX_ABORT,
+				'purge'    => WCD_AJAX_PURGE,
+				'ttlCheck' => WCD_AJAX_TTL_CHECK,
 			),
 			'symptoms'     => WCD_SYMPTOMS,
 			'symptomUrls'  => self::build_symptom_urls(),
@@ -180,10 +182,28 @@ class WCD_Wizard {
 		$candidates = isset( $session['candidates'] ) ? (array) $session['candidates'] : array();
 		$phase      = isset( $session['phase'] ) ? $session['phase'] : 'full';
 
+		// Contradictory result detection: same candidate set answered two different ways.
+		// Skip if this is the first round (no history yet) or if the merchant already
+		// acknowledged the intermittent warning via force=1.
+		$force    = ! empty( $_POST['force'] );
+		$history  = isset( $session['answer_history'] ) ? (array) $session['answer_history'] : array();
+		$fingerprint = md5( wp_json_encode( $candidates ) );
+		if ( ! $force && isset( $history[ $fingerprint ] ) && $history[ $fingerprint ] !== $effective_answer ) {
+			wp_send_json_success( array(
+				'status'  => 'intermittent',
+				'session' => self::sanitize_session_for_js( $session ),
+			) );
+		}
+		$history[ $fingerprint ] = $effective_answer;
+		WCD_Troubleshoot_Mode::update_session( $token, array( 'answer_history' => $history ) );
+
 		// First round: all plugins disabled. If still broken → not a conflict.
 		if ( 'full' === $phase && 'broken' === $effective_answer && $candidates === $session['disabled'] ) {
 			WCD_Troubleshoot_Mode::clear_session( $token );
-			wp_send_json_success( array( 'status' => 'not_a_conflict' ) );
+			wp_send_json_success( array(
+				'status'         => 'not_a_conflict',
+				'allowlist_kept' => self::get_allowlist_kept_display(),
+			) );
 		}
 
 		// Sequential mode (focused suspects tested one at a time).
@@ -213,7 +233,10 @@ class WCD_Wizard {
 		// Empty result: no culprit found (exhausted non-allowlisted plugins).
 		if ( empty( $result ) ) {
 			WCD_Troubleshoot_Mode::clear_session( $token );
-			wp_send_json_success( array( 'status' => 'not_a_conflict' ) );
+			wp_send_json_success( array(
+				'status'         => 'not_a_conflict',
+				'allowlist_kept' => self::get_allowlist_kept_display(),
+			) );
 		}
 
 		// Continuing — update session with new narrowed candidates.
@@ -275,6 +298,29 @@ class WCD_Wizard {
 		}
 
 		wp_send_json_success( array( 'status' => 'no_cache_plugin' ) );
+	}
+
+	// -------------------------------------------------------------------------
+	// AJAX — TTL pre-check (silent ping before "Try it now" navigation)
+	// -------------------------------------------------------------------------
+
+	public static function ajax_ttl_check() {
+		self::verify_request();
+
+		$token = WCD_Troubleshoot_Mode::get_token_from_cookie();
+		if ( ! $token ) {
+			self::send_error( 'wcd_ttl_expired', __( 'No active test session.', 'woocommerce-conflict-doctor' ) );
+		}
+
+		$session = WCD_Troubleshoot_Mode::get_session( $token );
+		if ( ! $session ) {
+			self::send_error( 'wcd_ttl_expired', __( 'Your test session has expired. Please restart.', 'woocommerce-conflict-doctor' ) );
+		}
+
+		wp_send_json_success( array(
+			'status'     => 'ok',
+			'expires_at' => $session['expires_at'] ?? 0,
+		) );
 	}
 
 	// -------------------------------------------------------------------------
@@ -420,6 +466,22 @@ class WCD_Wizard {
 			'theme'      => $session['theme'] ?? '',
 			'expires_at' => $session['expires_at'] ?? 0,
 		);
+	}
+
+	/**
+	 * Return the allowlisted plugins that stayed active during the test, as
+	 * display objects. Used in the "not a conflict" screen so the HE knows
+	 * which plugins were never tested and could still be the cause.
+	 */
+	private static function get_allowlist_kept_display() {
+		$active    = (array) get_option( 'active_plugins', array() );
+		$allowlist = self::get_allowlist();
+		$kept      = array_values( array_intersect( $allowlist, $active ) );
+		$out       = array();
+		foreach ( $kept as $file ) {
+			$out[] = self::get_plugin_display_data( $file );
+		}
+		return $out;
 	}
 
 	private static function get_plugin_display_data( $plugin_file ) {
@@ -591,6 +653,10 @@ class WCD_Wizard {
 			'themeKeepCurrent'       => __( 'Keep current theme (not recommended \xe2\x80\x94 may mask theme conflicts)', 'woocommerce-conflict-doctor' ),
 			'genericError'           => __( 'Something went wrong. Please try again.', 'woocommerce-conflict-doctor' ),
 			'expired'                => __( 'Your test session has expired. Please restart.', 'woocommerce-conflict-doctor' ),
+			'allowlistBoundaryHeader' => __( 'Plugins we kept active (not tested)', 'woocommerce-conflict-doctor' ),
+			'allowlistBoundaryBody'  => __( "These plugins stayed on throughout the test, so the issue could still involve one of them. Share this list with your support agent.", 'woocommerce-conflict-doctor' ),
+			'intermittentHeader'     => __( "We're seeing inconsistent results", 'woocommerce-conflict-doctor' ),
+			'intermittentBody'       => __( 'The same plugin set gave different answers on different rounds. This may be an intermittent issue that comes and goes on its own. You can continue the test, but the result may be unreliable.', 'woocommerce-conflict-doctor' ),
 		);
 	}
 

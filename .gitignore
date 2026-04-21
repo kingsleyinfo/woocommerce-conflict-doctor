@@ -1,0 +1,8 @@
+node_modules/
+vendor/
+composer.lock
+package-lock.json
+.phpunit.result.cache
+.wp-env/
+.DS_Store
+*.log
