@@ -47,6 +47,8 @@ class WCD_Wizard {
 			WCD_VERSION
 		);
 
+		$plugins_by_symptom = self::build_plugins_by_symptom();
+
 		wp_localize_script( 'wcd-wizard', 'wcdData', array(
 			'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
 			'nonce'        => wp_create_nonce( WCD_NONCE ),
@@ -57,10 +59,11 @@ class WCD_Wizard {
 				'purge'    => WCD_AJAX_PURGE,
 				'ttlCheck' => WCD_AJAX_TTL_CHECK,
 			),
-			'symptoms'     => WCD_SYMPTOMS,
-			'symptomUrls'  => self::build_symptom_urls(),
-			'ttl'          => WCD_SESSION_TTL,
-			'plugins'      => self::get_suspect_ranked_plugins(),
+			'symptoms'         => WCD_SYMPTOMS,
+			'symptomUrls'      => self::build_symptom_urls(),
+			'ttl'              => WCD_SESSION_TTL,
+			'plugins'          => $plugins_by_symptom[''],
+			'pluginsBySymptom' => $plugins_by_symptom,
 			'themes'       => self::get_safe_themes(),
 			'currentTheme' => get_stylesheet(),
 			'cachePlugin'  => self::detect_cache_plugin(),
@@ -241,15 +244,24 @@ class WCD_Wizard {
 
 		// Continuing — update session with new narrowed candidates.
 		$new_disabled = array_slice( $result, 0, (int) floor( count( $result ) / 2 ) );
+
+		// Diff what's changing so the merchant gets a plain-English summary in
+		// the waiting screen before they click "Try again" again.
+		$prev_disabled = isset( $session['disabled'] ) ? (array) $session['disabled'] : array();
+		$reenabled     = array_values( array_diff( $prev_disabled, $new_disabled ) );
+
 		WCD_Troubleshoot_Mode::update_session( $token, array(
 			'candidates' => $result,
 			'disabled'   => $new_disabled,
 		) );
 
 		wp_send_json_success( array(
-			'status'    => 'narrowing',
-			'session'   => self::sanitize_session_for_js( WCD_Troubleshoot_Mode::get_session( $token ) ),
-			'not_sure'  => ( 'not_sure' === $answer ),
+			'status'          => 'narrowing',
+			'session'         => self::sanitize_session_for_js( WCD_Troubleshoot_Mode::get_session( $token ) ),
+			'not_sure'        => ( 'not_sure' === $answer ),
+			'last_answer'     => $effective_answer,
+			'reenabled_names' => self::plugin_names( $reenabled ),
+			'disabled_names'  => self::plugin_names( $new_disabled ),
 		) );
 	}
 
@@ -490,6 +502,28 @@ class WCD_Wizard {
 		return $out;
 	}
 
+	/**
+	 * Map an array of plugin file paths to their human-readable names. Unknown
+	 * files fall through to the raw file path so the merchant still sees something.
+	 *
+	 * @param array $files Plugin file paths (slug/plugin-file.php form).
+	 * @return array Plugin display names, preserving input order.
+	 */
+	private static function plugin_names( array $files ) {
+		if ( empty( $files ) ) {
+			return array();
+		}
+		if ( ! function_exists( 'get_plugins' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+		$plugins = get_plugins();
+		$out     = array();
+		foreach ( $files as $file ) {
+			$out[] = isset( $plugins[ $file ] ) ? $plugins[ $file ]['Name'] : $file;
+		}
+		return $out;
+	}
+
 	private static function get_plugin_display_data( $plugin_file ) {
 		if ( ! function_exists( 'get_plugins' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -507,35 +541,121 @@ class WCD_Wizard {
 		return array( 'file' => $plugin_file, 'name' => $plugin_file, 'version' => '', 'author' => '' );
 	}
 
-	private static function get_suspect_ranked_plugins() {
+	/**
+	 * Build a map of symptom-key → ranked plugin list. The empty-string key
+	 * holds the default mtime-only ranking; each WCD_SYMPTOMS key holds a
+	 * ranking with that symptom's known suspects floated to the top.
+	 *
+	 * Computed once per page load (the wizard is a SPA — symptom is unknown
+	 * at script-localize time, so we pre-compute every variant). Plugin
+	 * metadata is gathered once and re-ranked, not re-fetched.
+	 *
+	 * @return array<string, array> Map keyed by symptom slug ('' included).
+	 */
+	private static function build_plugins_by_symptom() {
 		if ( ! function_exists( 'get_plugins' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/plugin.php';
 		}
 		$plugins   = get_plugins();
 		$active    = (array) get_option( 'active_plugins', array() );
 		$allowlist = self::get_allowlist();
-		$ranked    = array();
+		$map       = apply_filters( 'wcd_symptom_suspect_map', WCD_SYMPTOM_SUSPECT_MAP );
 
+		$candidates = array();
 		foreach ( $plugins as $file => $data ) {
 			$full_path = WP_PLUGIN_DIR . '/' . $file;
 			$mtime     = file_exists( $full_path ) ? filemtime( $full_path ) : 0;
-			$ranked[]  = array(
-				'file'         => $file,
-				'name'         => $data['Name'],
-				'version'      => $data['Version'],
-				'mtime'        => $mtime,
-				'active'       => in_array( $file, $active, true ),
-				'allowlisted'  => in_array( $file, $allowlist, true ),
-				'installed_ago' => human_time_diff( $mtime ),
+			$candidates[] = array(
+				'file'          => $file,
+				'name'          => $data['Name'],
+				'version'       => $data['Version'],
+				'mtime'         => $mtime,
+				'active'        => in_array( $file, $active, true ),
+				'allowlisted'   => in_array( $file, $allowlist, true ),
+				'installed_ago' => $mtime ? human_time_diff( $mtime ) : '',
 			);
 		}
 
-		// Newest first — most recently installed/updated is the likeliest culprit.
-		usort( $ranked, static function( $a, $b ) {
-			return $b['mtime'] <=> $a['mtime'];
-		} );
+		$by_symptom = array();
+		// Empty-symptom variant: pure mtime ranking, every entry tagged 'recent'.
+		$by_symptom[''] = apply_filters(
+			'wcd_suspect_plugins_by_symptom',
+			self::rank_suspects( $candidates, array() ),
+			'',
+			$plugins
+		);
+		foreach ( array_keys( WCD_SYMPTOMS ) as $symptom_key ) {
+			$slugs = isset( $map[ $symptom_key ] ) ? (array) $map[ $symptom_key ] : array();
+			$by_symptom[ $symptom_key ] = apply_filters(
+				'wcd_suspect_plugins_by_symptom',
+				self::rank_suspects( $candidates, $slugs ),
+				$symptom_key,
+				$plugins
+			);
+		}
 
-		return $ranked;
+		return $by_symptom;
+	}
+
+	/**
+	 * Rank a candidate list: plugins whose folder slug matches the symptom's
+	 * known-suspect map are floated to the top, the rest follow by mtime
+	 * (newest first). Each entry is tagged with `reason`: 'symptom' or 'recent'.
+	 *
+	 * Pure function — no WordPress calls. Tested directly in unit tests.
+	 *
+	 * @param array $candidates    Plugin entries with at least 'file' and 'mtime'.
+	 * @param array $symptom_slugs Plugin folder slugs to float to top. Matched case-insensitively.
+	 * @return array Re-ordered list with 'reason' added to each entry.
+	 */
+	public static function rank_suspects( array $candidates, array $symptom_slugs ) {
+		$slug_set = array();
+		foreach ( $symptom_slugs as $slug ) {
+			$slug_set[ strtolower( (string) $slug ) ] = true;
+		}
+
+		$matched = array();
+		$rest    = array();
+		foreach ( $candidates as $entry ) {
+			$folder = self::plugin_folder_slug( isset( $entry['file'] ) ? $entry['file'] : '' );
+			if ( '' !== $folder && isset( $slug_set[ $folder ] ) ) {
+				$entry['reason'] = 'symptom';
+				$matched[]       = $entry;
+			} else {
+				$entry['reason'] = 'recent';
+				$rest[]          = $entry;
+			}
+		}
+
+		$by_mtime = static function( $a, $b ) {
+			$am = isset( $a['mtime'] ) ? (int) $a['mtime'] : 0;
+			$bm = isset( $b['mtime'] ) ? (int) $b['mtime'] : 0;
+			return $bm <=> $am;
+		};
+		usort( $matched, $by_mtime );
+		usort( $rest, $by_mtime );
+
+		return array_merge( $matched, $rest );
+	}
+
+	/**
+	 * Extract the folder slug from a plugin file path, lowercased.
+	 * 'wp-mail-smtp/wp_mail_smtp.php' → 'wp-mail-smtp'. A single-file plugin
+	 * like 'hello.php' → 'hello'. Empty input → ''.
+	 *
+	 * Public for unit testability.
+	 */
+	public static function plugin_folder_slug( $file ) {
+		$file = (string) $file;
+		if ( '' === $file ) {
+			return '';
+		}
+		if ( false !== strpos( $file, '/' ) ) {
+			$folder = strstr( $file, '/', true );
+		} else {
+			$folder = preg_replace( '/\.php$/i', '', $file );
+		}
+		return strtolower( (string) $folder );
 	}
 
 	private static function get_safe_themes() {
@@ -653,7 +773,15 @@ class WCD_Wizard {
 			'modeHeader'             => __( 'Do you have a specific plugin in mind?', 'woocommerce-conflict-doctor' ),
 			'modeLikely'             => __( "We think these are the most likely culprits \xe2\x80\x94 recently installed or updated:", 'woocommerce-conflict-doctor' ),
 			'modeTestAll'            => __( "I don't know \xe2\x80\x94 test everything", 'woocommerce-conflict-doctor' ),
+			'modeFocused'            => __( 'I suspect one of these plugins', 'woocommerce-conflict-doctor' ),
+			'modeFocusedHelper'      => __( "Pick one or more plugins below \xe2\x80\x94 we'll test those first.", 'woocommerce-conflict-doctor' ),
+			'modeFocusedNeedPick'    => __( 'Pick at least one plugin to continue.', 'woocommerce-conflict-doctor' ),
 			'modeShowAll'            => __( 'Show all plugins', 'woocommerce-conflict-doctor' ),
+			'roundSummaryAnswerFixed' => __( 'Last round: you said it worked.', 'woocommerce-conflict-doctor' ),
+			'roundSummaryAnswerBroken' => __( 'Last round: you said it was still broken.', 'woocommerce-conflict-doctor' ),
+			'roundSummaryReenabled'  => __( "We've re-enabled: %s.", 'woocommerce-conflict-doctor' ),
+			'roundSummaryDisabled'   => __( 'Still off for this round: %s.', 'woocommerce-conflict-doctor' ),
+			'roundSummaryCta'        => __( 'Click "Try it now" to retest the site, then tell us how it went.', 'woocommerce-conflict-doctor' ),
 			'themeHeader'            => __( 'Choose a safe theme to test with', 'woocommerce-conflict-doctor' ),
 			'themeRecommended'       => __( 'recommended', 'woocommerce-conflict-doctor' ),
 			'themeKeepCurrent'       => __( 'Keep current theme (not recommended \xe2\x80\x94 may mask theme conflicts)', 'woocommerce-conflict-doctor' ),

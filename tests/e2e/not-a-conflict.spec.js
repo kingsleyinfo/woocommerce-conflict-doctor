@@ -21,7 +21,8 @@ test( 'still-broken on first round terminates as not-a-conflict', async ( { page
 	await page.selectOption( 'select[data-field="symptom"]', 'checkout' );
 	await page.click( 'button[data-action="symptom:next"]' );
 
-	await page.waitForSelector( 'button[data-action="mode:next"]' );
+	await page.waitForSelector( 'input[name="wcd-mode"][value="full"]' );
+	await page.check( 'input[name="wcd-mode"][value="full"]' );
 	await page.click( 'button[data-action="mode:next"]' );
 
 	await page.waitForSelector( 'input[name="wcd-theme"]' );
@@ -43,6 +44,8 @@ test( 'still-broken on first round terminates as not-a-conflict', async ( { page
 	const body = page.locator( '.wcd-result-not-conflict' );
 	await expect( body ).toContainText( /WooCommerce/i );
 
+	// Done resets and returns to the symptom start screen.
 	await page.click( 'button[data-action="done"]' );
-	await expect( page.locator( '.wcd-result h2' ) ).toContainText( /restored|back to normal/i );
+	await expect( page.locator( 'select[data-field="symptom"]' ) ).toBeVisible();
+	await expect( page.locator( 'select[data-field="symptom"]' ) ).toHaveValue( '' );
 } );
