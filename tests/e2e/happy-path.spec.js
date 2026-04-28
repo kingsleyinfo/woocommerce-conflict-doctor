@@ -24,8 +24,10 @@ test( 'full flow identifies a culprit after one round', async ( { page } ) => {
 	await page.selectOption( 'select[data-field="symptom"]', 'checkout' );
 	await page.click( 'button[data-action="symptom:next"]' );
 
-	// Step 2: mode (default 'full' — just continue)
-	await page.waitForSelector( 'button[data-action="mode:next"]' );
+	// Step 2: mode — pick "test everything" then continue. Neither radio is
+	// pre-selected (post-fix), so Continue is disabled until a mode is chosen.
+	await page.waitForSelector( 'input[name="wcd-mode"][value="full"]' );
+	await page.check( 'input[name="wcd-mode"][value="full"]' );
 	await page.click( 'button[data-action="mode:next"]' );
 
 	// Step 3: theme — pick the first safe theme.
@@ -47,7 +49,10 @@ test( 'full flow identifies a culprit after one round', async ( { page } ) => {
 	// Diagnosis textarea is populated for copy.
 	await expect( page.locator( '.wcd-diagnosis' ) ).toBeVisible();
 
-	// Done button returns to restored state.
+	// Done resets the wizard and returns to the symptom start screen with
+	// clean state (no pre-selected symptom).
 	await page.click( 'button[data-action="culprit:done"]' );
-	await expect( page.locator( '.wcd-result h2' ) ).toContainText( /restored|back to normal/i );
+	await expect( page.locator( 'select[data-field="symptom"]' ) ).toBeVisible();
+	await expect( page.locator( 'select[data-field="symptom"]' ) ).toHaveValue( '' );
+	await expect( page.locator( 'button[data-action="symptom:next"]' ) ).toBeDisabled();
 } );

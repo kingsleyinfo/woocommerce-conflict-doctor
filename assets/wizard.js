@@ -18,7 +18,7 @@
 	const state = {
 		step: 'loading',
 		symptom: '',
-		mode: 'full',          // 'focused' | 'full'
+		mode: '',              // '' (unchosen) | 'focused' | 'full'
 		suspects: [],
 		showAllPlugins: false,
 		theme: '',
@@ -28,7 +28,31 @@
 		error: null,
 		lastAnswer: null,      // last round answer, to show not-sure disclosure
 		allowlistKept: [],     // plugins kept active during test (for HE diagnostic)
+		roundSummary: null,    // { answer, reenabled: [names], disabled: [names] } for waiting screen
 	};
+
+	// Reset the entire wizard to a clean first-run state. Also fires a best-effort
+	// server abort to free the session immediately rather than wait for TTL —
+	// safe even if the session was already cleaned (abort is idempotent).
+	function resetWizard() {
+		localStorage.removeItem(STORAGE_KEY);
+		if (state.session) {
+			// Fire-and-forget — response value isn't needed.
+			ajax(data.actions.abort).catch(function() {});
+		}
+		state.symptom = '';
+		state.mode = '';
+		state.suspects = [];
+		state.showAllPlugins = false;
+		state.theme = '';
+		state.cachePurge = false;
+		state.session = null;
+		state.culprit = null;
+		state.error = null;
+		state.lastAnswer = null;
+		state.allowlistKept = [];
+		state.roundSummary = null;
+	}
 
 	// --------------------------------------------------------------------
 	// AJAX
@@ -144,10 +168,14 @@
 		},
 
 		mode() {
-			const plugins = data.plugins || [];
-			const nonAllowlisted = plugins.filter((p) => p.active && !p.allowlisted);
-			const topSuspects = nonAllowlisted.slice(0, 3);
-			const visible = state.showAllPlugins ? nonAllowlisted : topSuspects;
+			// Symptom-aware ordering is computed server-side: pluginsBySymptom
+			// holds one pre-ranked list per symptom (each entry tagged with
+			// `reason`: 'symptom' or 'recent'). Fall back to the default list
+			// when no symptom is chosen yet or the map is missing.
+			const bySymptom = data.pluginsBySymptom || {};
+			const ranked = bySymptom[state.symptom] || data.plugins || [];
+			const nonAllowlisted = ranked.filter((p) => p.active && !p.allowlisted);
+			const visible = state.showAllPlugins ? nonAllowlisted : nonAllowlisted.slice(0, 3);
 
 			let list = '';
 			visible.forEach((p) => {
@@ -163,18 +191,30 @@
 			const modeFullChecked = state.mode === 'full' ? ' checked' : '';
 			const modeFocusChecked = state.mode === 'focused' ? ' checked' : '';
 
-			const body = '<h2>' + escapeHtml(S.modeHeader) + '</h2>' +
-				'<p class="wcd-help">' + escapeHtml(S.modeLikely) + '</p>' +
-				'<div class="wcd-plugin-list">' + list + '</div>' +
-				'<p><a href="#" data-action="mode:toggleAll">' + escapeHtml(toggleLabel) + '</a></p>' +
+			// Radios render first. The plugin list + "Show all" toggle only
+			// appear in focused mode, so there's no ambiguity about whether
+			// checkbox picks matter when "test everything" is selected.
+			let body = '<h2>' + escapeHtml(S.modeHeader) + '</h2>' +
 				'<div class="wcd-mode-radio">' +
 				'<label><input type="radio" name="wcd-mode" value="full" data-field="mode"' + modeFullChecked + '> ' +
 				escapeHtml(S.modeTestAll) + '</label>' +
 				'<label><input type="radio" name="wcd-mode" value="focused" data-field="mode"' + modeFocusChecked + '> ' +
-				escapeHtml(S.modeHeader) + '</label>' +
+				escapeHtml(S.modeFocused) + '</label>' +
 				'</div>';
 
-			const disabled = state.mode === 'focused' && state.suspects.length === 0;
+			if (state.mode === 'focused') {
+				body += '<p class="wcd-help">' + escapeHtml(S.modeFocusedHelper) + '</p>' +
+					'<p class="wcd-help">' + escapeHtml(S.modeLikely) + '</p>' +
+					'<div class="wcd-plugin-list">' + list + '</div>' +
+					'<p><a href="#" data-action="mode:toggleAll">' + escapeHtml(toggleLabel) + '</a></p>';
+
+				if (state.suspects.length === 0) {
+					body += '<p class="wcd-help wcd-help-hint">' + escapeHtml(S.modeFocusedNeedPick) + '</p>';
+				}
+			}
+
+			const disabled = state.mode === '' ||
+				(state.mode === 'focused' && state.suspects.length === 0);
 			const footer = button(S.back, { action: 'mode:back' }) +
 				button(S.continue, { className: 'button button-primary', action: 'mode:next', disabled: disabled });
 			return card(body, footer);
@@ -276,8 +316,32 @@
 			let body = '<div class="wcd-waiting">' +
 				'<h2>' + escapeHtml(S.waitingHeader) + '</h2>' +
 				'<p>' + escapeHtml(S.waitingBody) + '</p>' +
-				'<p class="wcd-timer">Session expires in ' + mins + ' minutes.</p>' +
-				'<p><a href="' + escapeHtml(tryUrl) + '" target="_blank" rel="noopener" class="button button-primary button-hero" data-action="waiting:tryit">' +
+				'<p class="wcd-timer">Session expires in ' + mins + ' minutes.</p>';
+
+			// Round summary: what changed between last round and this one.
+			// Only shown after at least one round has been answered — on the
+			// very first waiting screen there's nothing to summarize.
+			if (state.roundSummary) {
+				const rs = state.roundSummary;
+				const answerLine = rs.answer === 'fixed'
+					? S.roundSummaryAnswerFixed
+					: S.roundSummaryAnswerBroken;
+				const fmt = (tpl, names) => escapeHtml(tpl).replace('%s', names.map(escapeHtml).join(', '));
+
+				let summary = '<div class="wcd-round-summary">' +
+					'<p><strong>' + escapeHtml(answerLine) + '</strong></p>';
+				if (rs.reenabled && rs.reenabled.length) {
+					summary += '<p>' + fmt(S.roundSummaryReenabled, rs.reenabled) + '</p>';
+				}
+				if (rs.disabled && rs.disabled.length) {
+					summary += '<p>' + fmt(S.roundSummaryDisabled, rs.disabled) + '</p>';
+				}
+				summary += '<p class="wcd-help">' + escapeHtml(S.roundSummaryCta) + '</p>' +
+					'</div>';
+				body += summary;
+			}
+
+			body += '<p><a href="' + escapeHtml(tryUrl) + '" target="_blank" rel="noopener" class="button button-primary button-hero" data-action="waiting:tryit">' +
 				escapeHtml(S.tryItNow) + '</a></p>' +
 				'<p class="wcd-help">' + escapeHtml(S.tryItHint) + '</p>';
 
@@ -549,7 +613,7 @@
 			}
 
 			case 'resume:continue':
-				setStep('waiting', { session: data.session });
+				setStep('waiting', { session: data.session, roundSummary: null });
 				break;
 
 			case 'intermittent:continue':
@@ -575,18 +639,12 @@
 
 			case 'culprit:done':
 			case 'done':
-				localStorage.removeItem(STORAGE_KEY);
-				setStep('restored');
+				resetWizard();
+				setStep('symptom');
 				break;
 
 			case 'error:restart':
-				localStorage.removeItem(STORAGE_KEY);
-				state.symptom = '';
-				state.suspects = [];
-				state.theme = '';
-				state.session = null;
-				state.culprit = null;
-				state.error = null;
+				resetWizard();
 				setStep('symptom');
 				break;
 		}
@@ -610,7 +668,7 @@
 			return;
 		}
 		localStorage.setItem(STORAGE_KEY, result.token);
-		setStep('waiting', { session: result.session });
+		setStep('waiting', { session: result.session, roundSummary: null });
 	}
 
 	async function sendRound(answer, extra) {
@@ -620,18 +678,23 @@
 		const result = await ajax(data.actions.round, payload);
 
 		if (result.status === 'culprit_found') {
-			setStep('culprit', { culprit: result.culprit });
+			setStep('culprit', { culprit: result.culprit, roundSummary: null });
 			return;
 		}
 		if (result.status === 'not_a_conflict') {
-			setStep('notAConflict', { allowlistKept: result.allowlist_kept || [] });
+			setStep('notAConflict', { allowlistKept: result.allowlist_kept || [], roundSummary: null });
 			return;
 		}
 		if (result.status === 'intermittent') {
 			setStep('intermittent', { session: result.session });
 			return;
 		}
-		setStep('waiting', { session: result.session });
+		const roundSummary = result.last_answer ? {
+			answer: result.last_answer,
+			reenabled: result.reenabled_names || [],
+			disabled: result.disabled_names || [],
+		} : null;
+		setStep('waiting', { session: result.session, roundSummary: roundSummary });
 	}
 
 	// --------------------------------------------------------------------

@@ -26,6 +26,53 @@ define( 'WCD_SYMPTOMS', array(
 	'other'     => 'Other',
 ) );
 
+// Symptom → plugin slug map. Keys match WCD_SYMPTOMS. Values are plugin folder
+// slugs (the segment before the slash in a WP plugin file path, e.g. 'wp-mail-smtp'
+// for wp-mail-smtp/wp_mail_smtp.php). Seed list — grow from real HE tickets.
+// Extensible via the wcd_symptom_suspect_map filter.
+define( 'WCD_SYMPTOM_SUSPECT_MAP', array(
+	'checkout' => array(
+		'woocommerce-gateway-stripe',
+		'woocommerce-paypal-payments',
+		'woocommerce-shipping',
+		'woocommerce-tax',
+		'woocommerce-subscriptions',
+	),
+	'cart'     => array(
+		'woocommerce-cart-fragments',
+		'cart-all-in-one-for-woocommerce',
+		'woocommerce-side-cart',
+		'woocommerce-bulk-discount',
+	),
+	'admin'    => array(
+		'admin-menu-editor',
+		'adminimize',
+		'user-role-editor',
+		'wp-admin-ui-customize',
+	),
+	'frontend' => array(
+		'elementor',
+		'wpbakery-page-builder',
+		'wp-rocket',
+		'w3-total-cache',
+		'autoptimize',
+	),
+	'emails'   => array(
+		'wp-mail-smtp',
+		'easy-wp-smtp',
+		'fluent-smtp',
+		'post-smtp',
+		'mailgun',
+	),
+	'products' => array(
+		'woocommerce-product-filter',
+		'woocommerce-additional-variation-images',
+		'woocommerce-variation-swatches',
+		'woocommerce-bookings',
+	),
+	'other'    => array(),
+) );
+
 // Plugins that must never be disabled during conflict testing.
 // Relative paths from wp-content/plugins/. Configurable per-install via wcd_allowlist filter.
 define( 'WCD_ALLOWLIST_DEFAULTS', array(
